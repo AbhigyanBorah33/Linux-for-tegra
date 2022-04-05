@@ -1,0 +1,9 @@
+config PINCTRL_MADERA
+	bool
+#	tristate "PINCTRL_MADERA"
+	select PINMUX
+	select GENERIC_PINCONF
+	default y if MFD_MADERA=m
+
+config PINCTRL_CS47L35
+	bool

@@ -2,8 +2,6 @@
 # Makefile for multifunction miscellaneous devices
 #
 
-subdir-ccflags-y += -Werror
-
 88pm860x-objs			:= 88pm860x-core.o 88pm860x-i2c.o
 obj-$(CONFIG_MFD_88PM860X)	+= 88pm860x.o
 obj-$(CONFIG_MFD_88PM800)	+= 88pm800.o 88pm80x.o
@@ -71,6 +69,14 @@ obj-$(CONFIG_MFD_WM8350)	+= wm8350.o
 obj-$(CONFIG_MFD_WM8350_I2C)	+= wm8350-i2c.o
 wm8994-objs			:= wm8994-core.o wm8994-irq.o wm8994-regmap.o
 obj-$(CONFIG_MFD_WM8994)	+= wm8994.o
+
+obj-$(CONFIG_MFD_MADERA)	+= madera-core.o
+ifeq ($(CONFIG_MFD_CS47L35),y)
+obj-$(CONFIG_MFD_MADERA)	+= cs47l35-tables.o
+endif
+#madera-spi-objs := cs47l35-tables.o madera-core.o ../pinctrl/cirrus/pinctrl-cs47l35.o
+madera-spi-objs := ../pinctrl/cirrus/pinctrl-cs47l35.o
+obj-$(CONFIG_MFD_MADERA_SPI)	+= madera-spi.o
 
 obj-$(CONFIG_TPS6105X)		+= tps6105x.o
 obj-$(CONFIG_TPS65010)		+= tps65010.o

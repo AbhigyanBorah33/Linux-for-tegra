@@ -10,6 +10,7 @@ obj-$(CONFIG_EXTCON_ADC_JACK)	+= extcon-adc-jack.o
 obj-$(CONFIG_EXTCON_ARIZONA)	+= extcon-arizona.o
 obj-$(CONFIG_EXTCON_AXP288)	+= extcon-axp288.o
 obj-$(CONFIG_EXTCON_GPIO)	+= extcon-gpio.o
+obj-$(CONFIG_EXTCON_MADERA)	+= extcon-madera.o
 obj-$(CONFIG_EXTCON_GPIO)	+= extcon-gpio-states.o
 obj-$(CONFIG_EXTCON_CABLE_XLATE) += extcon-cable-xlate.o
 obj-$(CONFIG_EXTCON_MAX14577)	+= extcon-max14577.o

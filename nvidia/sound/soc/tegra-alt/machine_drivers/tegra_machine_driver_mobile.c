@@ -33,7 +33,7 @@
 #include "tegra_asoc_machine_alt.h"
 #include "tegra210_xbar_alt.h"
 
-#define DRV_NAME "tegra-asoc:"
+#define DRV_NAME "tegra-asoc:cs47l35"
 
 #define PARAMS(sformat, channels)		\
 	{					\
@@ -311,7 +311,7 @@ static int tegra_machine_dai_init(struct snd_soc_pcm_runtime *runtime,
 	if (err < 0)
 		return err;
 
-	rtd = snd_soc_get_pcm_runtime(card, "rt565x-playback");
+	rtd = snd_soc_get_pcm_runtime(card, "cs47l35-codec");
 	if (rtd) {
 		dai_params =
 		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
@@ -537,15 +537,15 @@ static int tegra_machine_compr_set_params(struct snd_compr_stream *cstream)
 }
 #endif
 
-static int tegra_machine_fepi_init(struct snd_soc_pcm_runtime *rtd)
+static int tegra_machine_cs47l35_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct device *dev = rtd->card->dev;
 	int err;
 
-	err = snd_soc_dai_set_sysclk(rtd->codec_dai, SGTL5000_SYSCLK, 12288000,
+	err = snd_soc_dai_set_sysclk(rtd->codec_dai, 1, 12288000,
 				     SND_SOC_CLOCK_IN);
 	if (err) {
-		dev_err(dev, "failed to set sgtl5000 sysclk!\n");
+		dev_err(dev, "failed to set cs47l35 sysclk!\n");
 		return err;
 	}
 
@@ -609,8 +609,8 @@ static int codec_init(struct tegra_machine *machine)
 		if (strstr(dai_links[i].name, "rt565x-playback") ||
 		    strstr(dai_links[i].name, "rt565x-codec-sysclk-bclk1"))
 			dai_links[i].init = tegra_machine_rt565x_init;
-		else if (strstr(dai_links[i].name, "fe-pi-audio-z-v2"))
-			dai_links[i].init = tegra_machine_fepi_init;
+		else if (strstr(dai_links[i].name, "cs47l35-codec"))
+			dai_links[i].init = tegra_machine_cs47l35_init;
 	}
 
 	return 0;
@@ -735,22 +735,22 @@ static int tegra_machine_driver_probe(struct platform_device *pdev)
 	ret = snd_soc_of_parse_card_name(card, "nvidia,model");
 	if (ret)
 		return ret;
-
+	
 	match = of_match_device(tegra_machine_of_match, &pdev->dev);
 	if (!match) {
 		dev_err(&pdev->dev, "Error: No device match found\n");
 		return -ENODEV;
 	}
-
+	
 	if (!np) {
 		dev_err(&pdev->dev, "No DT node for tegra machine driver");
 		return -ENODEV;
 	}
-
+	
 	machine = devm_kzalloc(&pdev->dev, sizeof(*machine), GFP_KERNEL);
 	if (!machine)
 		return -ENOMEM;
-
+	
 	machine->soc_data = (struct tegra_machine_soc_data *)match->data;
 	if (!machine->soc_data)
 		return -EINVAL;
@@ -785,7 +785,7 @@ static int tegra_machine_driver_probe(struct platform_device *pdev)
 					card);
 	if (ret < 0)
 		goto cleanup_asoc;
-
+	
 	ret = snd_soc_register_card(card);
 	if (ret) {
 		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n",
