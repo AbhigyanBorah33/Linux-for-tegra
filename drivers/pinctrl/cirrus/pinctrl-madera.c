@@ -25,6 +25,151 @@
 
 #include "pinctrl-madera.h"
 
+//--------------------------------Added piece of code--------------------------------------------
+DEFINE_MUTEX(pinctrl_maps_mutex);
+
+static const unsigned int cs47l35_aif3_pins[] = { 0, 1, 2, 3 };
+static const unsigned int cs47l35_spk_pins[] = { 4, 5 };
+static const unsigned int cs47l35_aif1_pins[] = { 7, 8, 9, 10 };
+static const unsigned int cs47l35_aif2_pins[] = { 11, 12, 13, 14 };
+static const unsigned int cs47l35_mif1_pins[] = { 6, 15 };
+
+static const struct madera_pin_groups cs47l35_pin_groups[] = {
+	{ "aif1", cs47l35_aif1_pins, ARRAY_SIZE(cs47l35_aif1_pins) },
+	{ "aif2", cs47l35_aif2_pins, ARRAY_SIZE(cs47l35_aif2_pins) },
+	{ "aif3", cs47l35_aif3_pins, ARRAY_SIZE(cs47l35_aif3_pins) },
+	{ "mif1", cs47l35_mif1_pins, ARRAY_SIZE(cs47l35_mif1_pins) },
+	{ "pdmspk1", cs47l35_spk_pins, ARRAY_SIZE(cs47l35_spk_pins) },
+};
+
+const struct madera_pin_chip cs47l35_pin_chip = {
+	.n_pins = CS47L35_NUM_GPIOS,
+	.pin_groups = cs47l35_pin_groups,
+	.n_pin_groups = ARRAY_SIZE(cs47l35_pin_groups),
+};
+
+
+int pinconf_validate_map(const struct pinctrl_map *map, int i)
+{
+	if (!map->data.configs.group_or_pin) {
+		pr_err("failed to register map %s (%d): no group/pin given\n",
+		       map->name, i);
+		return -EINVAL;
+	}
+
+	if (!map->data.configs.num_configs ||
+			!map->data.configs.configs) {
+		pr_err("failed to register map %s (%d): no configs given\n",
+		       map->name, i);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+int pinmux_validate_map(struct pinctrl_map const *map, int i)
+{
+	if (!map->data.mux.function) {
+		pr_err("failed to register map %s (%d): no function given\n",
+		       map->name, i);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+struct pinctrl_maps {
+	struct list_head node;
+	struct pinctrl_map const *maps;
+	unsigned num_maps;
+};
+
+LIST_HEAD(pinctrl_maps);
+
+int pinctrl_register_map(struct pinctrl_map const *maps, unsigned num_maps,
+			 bool dup)
+{
+	int i, ret;
+	struct pinctrl_maps *maps_node;
+
+	pr_debug("add %u pinctrl maps\n", num_maps);
+
+	/* First sanity check the new mapping */
+	for (i = 0; i < num_maps; i++) {
+		if (!maps[i].dev_name) {
+			pr_err("failed to register map %s (%d): no device given\n",
+			       maps[i].name, i);
+			return -EINVAL;
+		}
+
+		if (!maps[i].name) {
+			pr_err("failed to register map %d: no map name given\n",
+			       i);
+			return -EINVAL;
+		}
+
+		if (maps[i].type != PIN_MAP_TYPE_DUMMY_STATE &&
+				!maps[i].ctrl_dev_name) {
+			pr_err("failed to register map %s (%d): no pin control device given\n",
+			       maps[i].name, i);
+			return -EINVAL;
+		}
+
+		switch (maps[i].type) {
+		case PIN_MAP_TYPE_DUMMY_STATE:
+			break;
+		case PIN_MAP_TYPE_MUX_GROUP:
+			ret = pinmux_validate_map(&maps[i], i);
+			if (ret < 0)
+				return ret;
+			break;
+		case PIN_MAP_TYPE_CONFIGS_PIN:
+		case PIN_MAP_TYPE_CONFIGS_GROUP:
+			ret = pinconf_validate_map(&maps[i], i);
+			if (ret < 0)
+				return ret;
+			break;
+		default:
+			pr_err("failed to register map %s (%d): invalid type given\n",
+			       maps[i].name, i);
+			return -EINVAL;
+		}
+	}
+
+	maps_node = kzalloc(sizeof(*maps_node), GFP_KERNEL);
+	if (!maps_node) {
+		pr_err("failed to alloc struct pinctrl_maps\n");
+		return -ENOMEM;
+	}
+
+	maps_node->num_maps = num_maps;
+	if (dup) {
+		maps_node->maps = kmemdup(maps, sizeof(*maps) * num_maps,
+					  GFP_KERNEL);
+		if (!maps_node->maps) {
+			pr_err("failed to duplicate mapping table\n");
+			kfree(maps_node);
+			return -ENOMEM;
+		}
+	} else {
+		maps_node->maps = maps;
+	}
+
+	mutex_lock(&pinctrl_maps_mutex);
+	list_add_tail(&maps_node->node, &pinctrl_maps);
+	mutex_unlock(&pinctrl_maps_mutex);
+
+	return 0;
+}
+
+int pinctrl_register_mappings(struct pinctrl_map const *maps,
+			      unsigned num_maps)
+{
+	return pinctrl_register_map(maps, num_maps, true);
+}
+//--------------------------------------------------------------------------------
+
+
 /*
  * Use pin GPIO names for consistency
  * NOTE: IDs are zero-indexed for coding convenience
@@ -1003,6 +1148,7 @@ static int madera_pin_probe(struct platform_device *pdev)
 	BUILD_BUG_ON(ARRAY_SIZE(madera_pin_single_group_names) !=
 		     ARRAY_SIZE(madera_pin_single_group_pins));
 
+	printk(KERN_DEBUG "pinctrl madera probe");
 	dev_dbg(&pdev->dev, "%s\n", __func__);
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
@@ -1057,6 +1203,7 @@ static int madera_pin_probe(struct platform_device *pdev)
 	if (pdata) {
 		ret = pinctrl_register_mappings(pdata->gpio_configs,
 						pdata->n_gpio_configs);
+//		ret = 0;
 		if (ret) {
 			dev_err(priv->dev,
 				"Failed to register pdata mappings (%d)\n",
