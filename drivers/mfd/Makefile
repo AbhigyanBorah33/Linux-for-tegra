@@ -75,7 +75,7 @@ ifeq ($(CONFIG_MFD_CS47L35),y)
 obj-$(CONFIG_MFD_MADERA)	+= cs47l35-tables.o
 endif
 #madera-spi-objs := cs47l35-tables.o madera-core.o ../pinctrl/cirrus/pinctrl-cs47l35.o
-madera-spi-objs := ../pinctrl/cirrus/pinctrl-cs47l35.o
+#madera-spi-objs := ../pinctrl/cirrus/pinctrl-cs47l35.o
 obj-$(CONFIG_MFD_MADERA_SPI)	+= madera-spi.o
 
 obj-$(CONFIG_TPS6105X)		+= tps6105x.o

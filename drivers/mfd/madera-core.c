@@ -175,7 +175,7 @@ static const struct mfd_cell cs47l92_devs[] = {
 
 const char *madera_name_from_type(enum madera_type type)
 {
-	printk(KERN_ALERT "madera_name_from_type\n");
+//	printk(KERN_ALERT "madera_name_from_type\n");
 	switch (type) {
 	case CS47L15:
 		return "CS47L15";
@@ -208,7 +208,7 @@ static int madera_wait_for_boot(struct madera *madera)
 	unsigned int val;
 	int ret;
 
-	printk(KERN_ALERT "madera_wait_for_boot\n");
+//	printk(KERN_ALERT "madera_wait_for_boot\n");
 	/*
 	 * We can't use an interrupt as we need to runtime resume to do so,
 	 * so we poll the status bit. This won't race with the interrupt
@@ -244,7 +244,7 @@ static int madera_soft_reset(struct madera *madera)
 {
 	int ret;
 
-	printk(KERN_ALERT "madera_soft_reset\n");
+//	printk(KERN_ALERT "madera_soft_reset\n");
 	ret = regmap_write(madera->regmap, MADERA_SOFTWARE_RESET, 0);
 	if (ret != 0) {
 		dev_err(madera->dev, "Failed to soft reset device: %d\n", ret);
@@ -259,14 +259,14 @@ static int madera_soft_reset(struct madera *madera)
 
 static void madera_enable_hard_reset(struct madera *madera)
 {
-	printk(KERN_ALERT "madera_enable_hard_reset\n");
+//	printk(KERN_ALERT "madera_enable_hard_reset\n");
 	if (madera->reset_gpio)
 		gpiod_set_value_cansleep(madera->reset_gpio, 0);
 }
 
 static void madera_disable_hard_reset(struct madera *madera)
 {
-	printk(KERN_ALERT "madera_disable_hard_reset\n");
+//	printk(KERN_ALERT "madera_disable_hard_reset\n");
 	if (madera->reset_gpio) {
 		gpiod_set_value_cansleep(madera->reset_gpio, 1);
 		usleep_range(1000, 2000);
@@ -279,7 +279,7 @@ static int madera_runtime_resume(struct device *dev)
 	struct madera *madera = dev_get_drvdata(dev);
 	int ret;
 		
-	printk(KERN_ALERT "madera_runtime_resume\n");
+//	printk(KERN_ALERT "madera_runtime_resume\n");
 
 	dev_dbg(dev, "Leaving sleep mode\n");
 
@@ -322,7 +322,7 @@ static int madera_runtime_suspend(struct device *dev)
 {
 	struct madera *madera = dev_get_drvdata(dev);
 
-	printk(KERN_ALERT "madera_runtime_suspend\n");
+//	printk(KERN_ALERT "madera_runtime_suspend\n");
 	dev_dbg(madera->dev, "Entering sleep mode\n");
 
 	regcache_cache_only(madera->regmap, true);
@@ -345,7 +345,7 @@ EXPORT_SYMBOL_GPL(madera_pm_ops);
 
 unsigned int madera_get_num_micbias(struct madera *madera)
 {
-	printk(KERN_ALERT "madera_get_num_micbias\n");
+//	printk(KERN_ALERT "madera_get_num_micbias\n");
 	switch (madera->type) {
 	case CS47L15:
 		return 1;
@@ -370,7 +370,7 @@ EXPORT_SYMBOL_GPL(madera_get_num_micbias);
 unsigned int madera_get_num_childbias(struct madera *madera,
 				      unsigned int micbias)
 {
-	printk(KERN_ALERT "madera_get_num_childbias\n");
+//	printk(KERN_ALERT "madera_get_num_childbias\n");
 	/*
 	 * micbias argument reserved for future codecs that don't
 	 * have the same number of children on each micbias
@@ -427,7 +427,7 @@ unsigned long madera_get_type_from_of(struct device *dev)
 {
 	const struct of_device_id *id = of_match_device(madera_of_match, dev);
 
-	printk(KERN_ALERT "madera_get_type_from_of\n");
+//	printk(KERN_ALERT "madera_get_type_from_of\n");
 	if (id)
 		return (unsigned long)id->data;
 	else
@@ -440,7 +440,7 @@ static int madera_get_reset_gpio(struct madera *madera)
 {
 	int ret;
 	
-	printk(KERN_ALERT "madera_get_reset_gpio\n");
+//	printk(KERN_ALERT "madera_get_reset_gpio\n");
 
 	/* We use 0 in pdata to indicate a GPIO has not been set */
 	if (dev_get_platdata(madera->dev) && (madera->pdata.reset > 0)) {
@@ -483,7 +483,7 @@ static void madera_prop_get_micbias_child(struct madera *madera,
 	struct device_node *np;
 	struct regulator_desc desc = { };
 	
-	printk(KERN_ALERT "madera_prop_get_micbias_child\n");
+//	printk(KERN_ALERT "madera_prop_get_micbias_child\n");
 
 	np = of_get_child_by_name(madera->dev->of_node, name);
 	if (!np)
@@ -502,7 +502,7 @@ static void madera_prop_get_micbias_gen(struct madera *madera,
 	struct device_node *np;
 	struct regulator_desc desc = { };
 	
-	printk(KERN_ALERT "madera_prop_get_micbias_gen\n");
+//	printk(KERN_ALERT "madera_prop_get_micbias_gen\n");
 
 	np = of_get_child_by_name(madera->dev->of_node, name);
 	if (!np)
@@ -521,7 +521,7 @@ static void madera_prop_get_micbias(struct madera *madera)
 	char name[10];
 	int i, child;
 	
-	printk(KERN_ALERT "madera_prop_get_micbias\n");
+//	printk(KERN_ALERT "madera_prop_get_micbias\n");
 
 	for (i = madera_get_num_micbias(madera) - 1; i >= 0; --i) {
 		pdata = &madera->pdata.micbias[i];
@@ -548,7 +548,7 @@ static void madera_configure_micbias(struct madera *madera)
 	unsigned int val, mask, reg;
 	int i, child, ret;
 	
-	printk(KERN_ALERT "madera_configure_micbias\n");
+//	printk(KERN_ALERT "madera_configure_micbias\n");
 
 	for (i = 0; i < num_micbias; ++i) {
 		pdata = &madera->pdata.micbias[i];
@@ -633,7 +633,7 @@ int madera_dev_init(struct madera *madera)
 	int n_devs = 0;
 	int i, ret;
 	
-	printk(KERN_ALERT "madera_dev_init\n");
+//	printk(KERN_ALERT "madera_dev_init\n");
 
 	dev_set_drvdata(madera->dev, madera);
 	BLOCKING_INIT_NOTIFIER_HEAD(&madera->notifier);
@@ -902,7 +902,7 @@ EXPORT_SYMBOL_GPL(madera_dev_init);
 
 int madera_dev_exit(struct madera *madera)
 {
-	printk(KERN_ALERT "madera_dev_exit\n");
+//	printk(KERN_ALERT "madera_dev_exit\n");
 	/* Prevent any IRQs being serviced while we clean up */
 	disable_irq(madera->irq);
 

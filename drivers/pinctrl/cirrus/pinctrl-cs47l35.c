@@ -45,3 +45,4 @@ const struct madera_pin_chip cs47l35_pin_chip = {
 	.n_pin_groups = ARRAY_SIZE(cs47l35_pin_groups),
 };
 
+MODULE_LICENSE("GPL v2");

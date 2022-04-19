@@ -28,7 +28,7 @@ static int madera_spi_probe(struct spi_device *spi)
 	unsigned long type;
 	int ret;
 
-	printk(KERN_ALERT "madera_spi_probe\n");
+	printk(KERN_DEBUG "madera_spi_probe\n");
 	if (spi->dev.of_node)
 		type = madera_get_type_from_of(&spi->dev);
 	else
@@ -112,7 +112,7 @@ static int madera_spi_remove(struct spi_device *spi)
 {
 	struct madera *madera = spi_get_drvdata(spi);
 
-	printk(KERN_ALERT "madera_spi_remove\n");
+	printk(KERN_DEBUG "madera_spi_remove\n");
 	madera_dev_exit(madera);
 
 	return 0;

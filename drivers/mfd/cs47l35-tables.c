@@ -57,7 +57,7 @@ int cs47l35_patch(struct madera *madera)
 {
 	int ret;
 
-	printk(KERN_ALERT "cs47l35_patch\n");
+//	printk(KERN_ALERT "cs47l35_patch\n");
 	ret = regmap_register_patch(madera->regmap, cs47l35_reva_16_patch,
 				    ARRAY_SIZE(cs47l35_reva_16_patch));
 	if (ret < 0)
@@ -815,7 +815,7 @@ static const struct reg_default cs47l35_reg_default[] = {
 
 static bool cs47l35_is_adsp_memory(unsigned int reg)
 {
-    	printk(KERN_ALERT "cs47l35_is_adsp_memory\n");
+//    	printk(KERN_ALERT "cs47l35_is_adsp_memory\n");
 	switch (reg) {
 	case 0x080000 ... 0x085ffe:
 	case 0x0a0000 ... 0x0a7ffe:
@@ -840,7 +840,7 @@ static bool cs47l35_is_adsp_memory(unsigned int reg)
 static bool cs47l35_16bit_readable_register(struct device *dev,
 					    unsigned int reg)
 {
-   	printk(KERN_ALERT "cs47l35_16bit_readable_register\n");
+//  	printk(KERN_ALERT "cs47l35_16bit_readable_register\n");
 	switch (reg) {
 	case MADERA_SOFTWARE_RESET:
 	case MADERA_HARDWARE_REVISION:
@@ -1560,7 +1560,7 @@ static bool cs47l35_16bit_readable_register(struct device *dev,
 static bool cs47l35_16bit_volatile_register(struct device *dev,
 					    unsigned int reg)
 {
-    	printk(KERN_ALERT "cs47l35_16bit_volatile_register\n");
+//    	printk(KERN_ALERT "cs47l35_16bit_volatile_register\n");
 	switch (reg) {
 	case MADERA_SOFTWARE_RESET:
 	case MADERA_HARDWARE_REVISION:
@@ -1600,7 +1600,7 @@ static bool cs47l35_16bit_volatile_register(struct device *dev,
 static bool cs47l35_32bit_readable_register(struct device *dev,
 					    unsigned int reg)
 {
-	printk(KERN_ALERT "cs47l35_32bit_readable_register\n");
+//	printk(KERN_ALERT "cs47l35_32bit_readable_register\n");
 	switch (reg) {
 	case MADERA_WSEQ_SEQUENCE_1 ... MADERA_WSEQ_SEQUENCE_252:
 	case CS47L35_OTP_HPDET_CAL_1 ... CS47L35_OTP_HPDET_CAL_2:
@@ -1616,7 +1616,7 @@ static bool cs47l35_32bit_readable_register(struct device *dev,
 static bool cs47l35_32bit_volatile_register(struct device *dev,
 					    unsigned int reg)
 {
-	printk(KERN_ALERT "cs47l35_32bit_volatile_register\n");
+//	printk(KERN_ALERT "cs47l35_32bit_volatile_register\n");
 	switch (reg) {
 	case MADERA_WSEQ_SEQUENCE_1 ... MADERA_WSEQ_SEQUENCE_252:
 	case CS47L35_OTP_HPDET_CAL_1 ... CS47L35_OTP_HPDET_CAL_2:

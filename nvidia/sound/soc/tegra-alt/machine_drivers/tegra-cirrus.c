@@ -1,846 +1,284 @@
 /*
- * tegra_machine_driver_mobile.c - Tegra ASoC Machine driver for mobile
+ * ASoC machine driver for Cirrus Logic Audio Card
+ * (with CS47L35 codec)
  *
- * Copyright (c) 2017-2019 NVIDIA CORPORATION.  All rights reserved.
+ * Copyright 2015-2017 Matthias Reichl <hias@horus.com>
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
+ * Based on rpi-cirrus-sound-pi driver (c) Wolfson / Cirrus Logic Inc.
  *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
-#include <linux/platform_device.h>
-#include <linux/of_platform.h>
-#include <linux/input.h>
-#include <linux/gpio.h>
-#include <linux/pm_runtime.h>
-#include <sound/core.h>
-#include <sound/jack.h>
-#include <sound/pcm.h>
+#include <linux/mutex.h>
+#include <linux/slab.h>
+#include <linux/list.h>
+#include <linux/delay.h>
 #include <sound/pcm_params.h>
-#include <sound/soc.h>
-#include <dt-bindings/sound/tas2552.h>
-#include "rt5659.h"
-#include "sgtl5000.h"
-#include "tegra_asoc_machine_alt.h"
-#include "tegra210_xbar_alt.h"
 
-#define DRV_NAME "tegra-asoc:"
+#include <linux/mfd/madera/registers.h>
+#include <linux/mfd/madera/core.h>
 
-#define PARAMS(sformat, channels)		\
-	{					\
-		.formats = sformat,		\
-		.rate_min = 48000,		\
-		.rate_max = 48000,		\
-		.channels_min = channels,	\
-		.channels_max = channels,	\
-	}
+#include "madera.h"
 
-/* t210 soc data */
-static const struct tegra_machine_soc_data soc_data_tegra210 = {
-	.admaif_dai_link_start		= TEGRA210_DAI_LINK_ADMAIF1,
-	.admaif_dai_link_end		= TEGRA210_DAI_LINK_ADMAIF10,
-#if IS_ENABLED(CONFIG_SND_SOC_TEGRA210_ADSP_ALT)
-	.adsp_pcm_dai_link_start	= TEGRA210_DAI_LINK_ADSP_PCM1,
-	.adsp_pcm_dai_link_end		= TEGRA210_DAI_LINK_ADSP_PCM2,
-	.adsp_compr_dai_link_start	= TEGRA210_DAI_LINK_ADSP_COMPR1,
-	.adsp_compr_dai_link_end	= TEGRA210_DAI_LINK_ADSP_COMPR2,
-#endif
-	.sfc_dai_link			= TEGRA210_DAI_LINK_SFC1_RX,
+#define CS47L35_MAX_SYSCLK_1 98304000 /* max sysclk */
+#define AUD_MCLK 12288000 //256X of the sampling frequency i.e 256x48000
 
-	.write_idle_bias_off_state	= false,
-
-	.ahub_links			= tegra210_xbar_dai_links,
-	.num_ahub_links			= TEGRA210_XBAR_DAI_LINKS,
-	.ahub_confs			= tegra210_xbar_codec_conf,
-	.num_ahub_confs			= TEGRA210_XBAR_CODEC_CONF,
+enum {
+	DAI_CS47L35 = 0,
 };
 
-/* t186 soc data */
-static const struct tegra_machine_soc_data soc_data_tegra186 = {
-	.admaif_dai_link_start		= TEGRA186_DAI_LINK_ADMAIF1,
-	.admaif_dai_link_end		= TEGRA186_DAI_LINK_ADMAIF10,
-#if IS_ENABLED(CONFIG_SND_SOC_TEGRA210_ADSP_ALT)
-	.adsp_pcm_dai_link_start	= TEGRA186_DAI_LINK_ADSP_PCM1,
-	.adsp_pcm_dai_link_end		= TEGRA186_DAI_LINK_ADSP_PCM2,
-	.adsp_compr_dai_link_start	= TEGRA186_DAI_LINK_ADSP_COMPR1,
-	.adsp_compr_dai_link_end	= TEGRA186_DAI_LINK_ADSP_COMPR2,
-#endif
-	.sfc_dai_link			= TEGRA186_DAI_LINK_SFC1_RX,
-
-	.write_idle_bias_off_state	= true,
-
-	.ahub_links			= tegra186_xbar_dai_links,
-	.num_ahub_links			= TEGRA186_XBAR_DAI_LINKS,
-	.ahub_confs			= tegra186_xbar_codec_conf,
-	.num_ahub_confs			= TEGRA186_XBAR_CODEC_CONF,
+struct tegra_cirrus_priv {
+	/* mutex for synchronzing FLL1 access with DAPM */
+	struct mutex lock;
 };
 
-static const char * const tegra_machine_srate_text[] = {
-	"None",
-	"8kHz",
-	"16kHz",
-	"44kHz",
-	"48kHz",
-	"11kHz",
-	"22kHz",
-	"24kHz",
-	"32kHz",
-	"88kHz",
-	"96kHz",
-	"176kHz",
-	"192kHz",
+/* helper functions */
+static inline struct snd_soc_pcm_runtime *get_cs47l35_runtime(
+	struct snd_soc_card *card) {
+	//struct snd_soc_pcm_runtime *snd_soc_get_pcm_runtime(struct snd_soc_card *card, struct snd_soc_dai_link *dai_link)
+	return snd_soc_get_pcm_runtime(card, card->dai_link[DAI_CS47L35].name);
+}
+
+const struct snd_soc_dapm_widget tegra_cirrus_dapm_widgets[] = {
+	SND_SOC_DAPM_SPK("Headphone", NULL),
+	// SND_SOC_DAPM_SPK("d1 Headphone", NULL),
+	// SND_SOC_DAPM_SPK("d2 Headphone", NULL),
+	// SND_SOC_DAPM_SPK("d3 Headphone", NULL),
 };
 
-static const char * const tegra_machine_format_text[] = {
-	"None",
-	"16",
-	"32",
+const struct snd_soc_dapm_route tegra_cirrus_dapm_routes[] = {
+	//{ sink, control, source }
+	{ "Headphone", NULL, "HPOUTL" },
+    { "Headphone", NULL, "HPOUTR" },
 };
 
-static const struct soc_enum tegra_machine_codec_rate =
-	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(tegra_machine_srate_text),
-			    tegra_machine_srate_text);
+static int tegra_cirrus_clear_flls(struct snd_soc_card *card,
+	struct snd_soc_codec *cs47l35_codec) {
 
-static const struct soc_enum tegra_machine_codec_format =
-	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(tegra_machine_format_text),
-			    tegra_machine_format_text);
-
-static const int tegra_machine_srate_values[] = {
-	0,
-	8000,
-	16000,
-	44100,
-	48000,
-	11025,
-	22050,
-	24000,
-	32000,
-	88200,
-	96000,
-	176400,
-	192000,
-};
-
-static const struct snd_soc_dapm_widget tegra_machine_dapm_widgets[] = {
-	SND_SOC_DAPM_SPK("x Int Spk", NULL),
-	SND_SOC_DAPM_HP("x Headphone Jack", NULL),
-	SND_SOC_DAPM_MIC("x Int Mic", NULL),
-	SND_SOC_DAPM_MIC("x Mic Jack", NULL),
-
-	SND_SOC_DAPM_SPK("d1 Headphone", NULL),
-	SND_SOC_DAPM_SPK("d2 Headphone", NULL),
-	SND_SOC_DAPM_SPK("d3 Headphone", NULL),
-
-	SND_SOC_DAPM_HP("w Headphone", NULL),
-	SND_SOC_DAPM_HP("x Headphone", NULL),
-	SND_SOC_DAPM_HP("y Headphone", NULL),
-	SND_SOC_DAPM_HP("z Headphone", NULL),
-	SND_SOC_DAPM_HP("l Headphone", NULL),
-	SND_SOC_DAPM_HP("m Headphone", NULL),
-	SND_SOC_DAPM_HP("n Headphone", NULL),
-	SND_SOC_DAPM_HP("o Headphone", NULL),
-	SND_SOC_DAPM_HP("s Headphone", NULL),
-
-	SND_SOC_DAPM_MIC("Int Mic", NULL),
-	SND_SOC_DAPM_MIC("w Mic", NULL),
-	SND_SOC_DAPM_MIC("x Mic", NULL),
-	SND_SOC_DAPM_MIC("y Mic", NULL),
-	SND_SOC_DAPM_MIC("z Mic", NULL),
-	SND_SOC_DAPM_MIC("l Mic", NULL),
-	SND_SOC_DAPM_MIC("m Mic", NULL),
-	SND_SOC_DAPM_MIC("n Mic", NULL),
-	SND_SOC_DAPM_MIC("o Mic", NULL),
-	SND_SOC_DAPM_MIC("a Mic", NULL),
-	SND_SOC_DAPM_MIC("b Mic", NULL),
-	SND_SOC_DAPM_MIC("c Mic", NULL),
-	SND_SOC_DAPM_MIC("d Mic", NULL),
-	SND_SOC_DAPM_MIC("s Mic", NULL),
-};
-
-static struct snd_soc_pcm_stream tegra_machine_asrc_link_params[] = {
-	PARAMS(SNDRV_PCM_FMTBIT_S32_LE, 8),
-	PARAMS(SNDRV_PCM_FMTBIT_S16_LE, 2),
-	PARAMS(SNDRV_PCM_FMTBIT_S16_LE, 2),
-	PARAMS(SNDRV_PCM_FMTBIT_S16_LE, 2),
-	PARAMS(SNDRV_PCM_FMTBIT_S16_LE, 2),
-	PARAMS(SNDRV_PCM_FMTBIT_S16_LE, 2),
-};
-
-static int tegra_machine_codec_get_rate(struct snd_kcontrol *kcontrol,
-					struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(card);
-
-	ucontrol->value.integer.value[0] = machine->rate_via_kcontrol;
-
-	return 0;
-}
-
-static int tegra_machine_codec_put_rate(struct snd_kcontrol *kcontrol,
-					struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(card);
-
-	/* set the rate control flag */
-	machine->rate_via_kcontrol = ucontrol->value.integer.value[0];
-
-	return 0;
-}
-
-static int tegra_machine_codec_get_format(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(card);
-
-	ucontrol->value.integer.value[0] = machine->fmt_via_kcontrol;
-
-	return 0;
-}
-
-static int tegra_machine_codec_put_format(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(card);
-
-	/* set the format control flag */
-	machine->fmt_via_kcontrol = ucontrol->value.integer.value[0];
-
-	return 0;
-}
-
-static int tegra_machine_set_params(struct snd_soc_card *card,
-				    struct tegra_machine *machine,
-				    unsigned int rate,
-				    unsigned int channels,
-				    u64 formats)
-{
-	unsigned int mask = (1 << channels) - 1;
-	struct snd_soc_pcm_runtime *rtd;
-	int idx = 0, err = 0;
-	u64 format_k;
-
-	int num_of_dai_links = machine->soc_data->num_ahub_links +
-			       machine->num_codec_links;
-
-	format_k = (machine->fmt_via_kcontrol == 2) ?
-			(1ULL << SNDRV_PCM_FORMAT_S32_LE) : formats;
-
-	/* update dai link hw_params */
-	list_for_each_entry(rtd, &card->rtd_list, list) {
-		if (rtd->dai_link->params) {
-			struct snd_soc_pcm_stream *dai_params;
-
-			dai_params =
-			  (struct snd_soc_pcm_stream *)
-			  rtd->dai_link->params;
-
-			dai_params->rate_min = rate;
-			dai_params->channels_min = channels;
-			dai_params->formats = format_k;
-
-			if ((idx >= machine->soc_data->num_ahub_links)
-				&& (idx < num_of_dai_links)) {
-				unsigned int fmt;
-
-				/* TODO: why below overrite is needed */
-				dai_params->formats = formats;
-
-				fmt = rtd->dai_link->dai_fmt;
-				fmt &= SND_SOC_DAIFMT_FORMAT_MASK;
-
-				/* set TDM slot mask */
-				if (fmt == SND_SOC_DAIFMT_DSP_A ||
-				    fmt == SND_SOC_DAIFMT_DSP_B) {
-					err = snd_soc_dai_set_tdm_slot(
-							rtd->cpu_dai, mask,
-							mask, 0, 0);
-					if (err < 0) {
-						dev_err(card->dev,
-						"%s cpu DAI slot mask not set\n",
-						rtd->cpu_dai->name);
-						return err;
-					}
-				}
-			}
-		}
-		idx++;
-	}
-	return 0;
-}
-
-static int tegra_machine_dai_init(struct snd_soc_pcm_runtime *runtime,
-				  unsigned int rate, unsigned int channels,
-				  u64 formats)
-{
-	struct snd_soc_card *card = runtime->card;
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(card);
-	struct snd_soc_pcm_stream *dai_params;
-	unsigned int aud_mclk, srate;
-	int err;
-	struct snd_soc_pcm_runtime *rtd;
-
-	srate = (machine->rate_via_kcontrol) ?
-			tegra_machine_srate_values[machine->rate_via_kcontrol] :
-			rate;
-
-	err = tegra_alt_asoc_utils_set_rate(&machine->audio_clock, srate, 0, 0);
-	if (err < 0) {
-		dev_err(card->dev, "Can't configure clocks\n");
-		return err;
-	}
-
-	aud_mclk = machine->audio_clock.set_aud_mclk_rate;
-
-	pr_debug("pll_a_out0 = %u Hz, aud_mclk = %u Hz, sample rate = %u Hz\n",
-		 machine->audio_clock.set_pll_out_rate, aud_mclk, srate);
-
-	err = tegra_machine_set_params(card, machine, rate, channels, formats);
-	if (err < 0)
-		return err;
-
-	rtd = snd_soc_get_pcm_runtime(card, "cs47l35-codec");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		dai_params->rate_min = srate;
-		dai_params->formats = (machine->fmt_via_kcontrol == 2) ?
-			(1ULL << SNDRV_PCM_FORMAT_S32_LE) : formats;
-
-		err = snd_soc_dai_set_sysclk(rtd->codec_dai, RT5659_SCLK_S_MCLK,
-					     aud_mclk, SND_SOC_CLOCK_IN);
-		if (err < 0) {
-			dev_err(card->dev, "codec_dai clock not set\n");
-			return err;
-		}
-	}
-
-	rtd = snd_soc_get_pcm_runtime(card, "rt565x-codec-sysclk-bclk1");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		dai_params->rate_min = srate;
-		dai_params->formats = (machine->fmt_via_kcontrol == 2) ?
-			(1ULL << SNDRV_PCM_FORMAT_S32_LE) : formats;
-
-		err = rt565x_manage_codec_sysclk(dai_params, rtd->codec_dai,
-						 RT5659_PLL1_S_BCLK1);
-		if (err < 0) {
-			dev_err(card->dev, "codec_dai clock not set\n");
-			return err;
-		}
-	}
-
-	rtd = snd_soc_get_pcm_runtime(card, "spdif-dit-0");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		dai_params->rate_min = srate;
-	}
-
-	rtd = snd_soc_get_pcm_runtime(card, "spdif-dit-1");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		dai_params->rate_min = srate;
-	}
-
-	/* set clk rate for i2s3 dai link*/
-	rtd = snd_soc_get_pcm_runtime(card, "spdif-dit-2");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		dai_params->rate_min = srate;
-	}
-
-	rtd = snd_soc_get_pcm_runtime(card, "spdif-dit-3");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		dai_params->rate_min = srate;
-	}
-
-	rtd = snd_soc_get_pcm_runtime(card, "spdif-dit-5");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		/* update link_param to update hw_param for DAPM */
-		dai_params->rate_min = srate;
-		dai_params->channels_min = channels;
-		dai_params->formats = formats;
-	}
-
-	rtd = snd_soc_get_pcm_runtime(card, "dspk-playback-r");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		if (!strcmp(rtd->codec_dai->name, "tas2552-amplifier")) {
-			err = snd_soc_dai_set_sysclk(rtd->codec_dai,
-				TAS2552_PDM_CLK_IVCLKIN, aud_mclk,
-				SND_SOC_CLOCK_IN);
-			if (err < 0) {
-				dev_err(card->dev, "codec_dai clock not set\n");
-				return err;
-			}
-		}
-	}
-
-	rtd = snd_soc_get_pcm_runtime(card, "dspk-playback-l");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		if (!strcmp(rtd->codec_dai->name, "tas2552-amplifier")) {
-			err = snd_soc_dai_set_sysclk(rtd->codec_dai,
-				TAS2552_PDM_CLK_IVCLKIN, aud_mclk,
-				SND_SOC_CLOCK_IN);
-			if (err < 0) {
-				dev_err(card->dev, "codec_dai clock not set\n");
-				return err;
-			}
-		}
-	}
-
-	rtd = snd_soc_get_pcm_runtime(card, "fe-pi-audio-z-v2");
-	if (rtd) {
-		dai_params =
-		(struct snd_soc_pcm_stream *)rtd->dai_link->params;
-
-		dai_params->rate_min = srate;
-		dai_params->channels_min = channels;
-		dai_params->formats = formats;
-	}
-
-	return 0;
-}
-
-static int tegra_machine_pcm_hw_params(struct snd_pcm_substream *substream,
-					struct snd_pcm_hw_params *params)
-{
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_card *card = rtd->card;
-	int err;
-
-	err = tegra_machine_dai_init(rtd, params_rate(params),
-				     params_channels(params),
-				     1ULL << params_format(params));
-	if (err < 0) {
-		dev_err(card->dev, "Failed dai init\n");
-		return err;
-	}
-
-	return 0;
-}
-
-static int tegra_machine_pcm_startup(struct snd_pcm_substream *substream)
-{
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(rtd->card);
-
-	tegra_alt_asoc_utils_clk_enable(&machine->audio_clock);
-
-	return 0;
-}
-
-static void tegra_machine_pcm_shutdown(struct snd_pcm_substream *substream)
-{
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(rtd->card);
-
-	tegra_alt_asoc_utils_clk_disable(&machine->audio_clock);
-}
-
-static int tegra_machine_suspend_pre(struct snd_soc_card *card)
-{
-	struct snd_soc_pcm_runtime *rtd;
-
-	/* DAPM dai link stream work for non pcm links */
-	list_for_each_entry(rtd, &card->rtd_list, list) {
-		if (rtd->dai_link->params)
-			INIT_DELAYED_WORK(&rtd->delayed_work, NULL);
-	}
-
-	return 0;
-}
-
-#if IS_ENABLED(CONFIG_SND_SOC_TEGRA210_ADSP_ALT)
-static int tegra_machine_compr_startup(struct snd_compr_stream *cstream)
-{
-	struct snd_soc_pcm_runtime *rtd = cstream->private_data;
-	struct snd_soc_card *card = rtd->card;
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(card);
-
-	tegra_alt_asoc_utils_clk_enable(&machine->audio_clock);
-
-	return 0;
-}
-
-static void tegra_machine_compr_shutdown(struct snd_compr_stream *cstream)
-{
-	struct snd_soc_pcm_runtime *rtd = cstream->private_data;
-	struct snd_soc_card *card = rtd->card;
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(card);
-
-	tegra_alt_asoc_utils_clk_disable(&machine->audio_clock);
-}
-
-static int tegra_machine_compr_set_params(struct snd_compr_stream *cstream)
-{
-	struct snd_soc_pcm_runtime *rtd = cstream->private_data;
-	struct snd_soc_card *card = rtd->card;
-	struct snd_soc_platform *platform = rtd->platform;
-	struct snd_codec codec_params;
-	int err;
-
-	if (platform->driver->compr_ops &&
-		platform->driver->compr_ops->get_params) {
-		err = platform->driver->compr_ops->get_params(cstream,
-			&codec_params);
-		if (err < 0) {
-			dev_err(card->dev, "Failed to get compr params\n");
-			return err;
-		}
-	} else {
-		dev_err(card->dev, "compr ops not set\n");
-		return -EINVAL;
-	}
-
-	err = tegra_machine_dai_init(rtd, codec_params.sample_rate,
-				     codec_params.ch_out,
-				     SNDRV_PCM_FMTBIT_S16_LE);
-	if (err < 0) {
-		dev_err(card->dev, "Failed dai init\n");
-		return err;
-	}
-
-	return 0;
-}
-#endif
-
-static int tegra_machine_cs47l35_init(struct snd_soc_pcm_runtime *rtd)
-{
-	struct device *dev = rtd->card->dev;
-	int err;
-
-	err = snd_soc_dai_set_sysclk(rtd->codec_dai, 1, 12288000,
-				     SND_SOC_CLOCK_IN);
-	if (err) {
-		dev_err(dev, "failed to set cs47l35 sysclk!\n");
-		return err;
-	}
-
-	return 0;
-}
-
-static int tegra_machine_rt565x_init(struct snd_soc_pcm_runtime *rtd)
-{
-	struct snd_soc_card *card = rtd->card;
-	struct snd_soc_jack *jack;
-	int err;
-
-	jack = devm_kzalloc(card->dev, sizeof(struct snd_soc_jack), GFP_KERNEL);
-	if (!jack)
-		return -ENOMEM;
-
-	err = snd_soc_card_jack_new(card, "Headset Jack", SND_JACK_HEADSET,
-				    jack, NULL, 0);
-	if (err) {
-		dev_err(card->dev, "Headset Jack creation failed %d\n", err);
-		return err;
-	}
-
-	err = tegra_machine_add_codec_jack_control(card, rtd, jack);
-	if (err) {
-		dev_err(card->dev, "Failed to add jack control: %d\n", err);
-		return err;
-	}
-
-	err = rt5659_set_jack_detect(rtd->codec, jack);
-	if (err) {
-		dev_err(card->dev, "Failed to set jack for RT565x: %d\n", err);
-		return err;
-	}
-
-	/* single button supporting play/pause */
-	snd_jack_set_key(jack->jack, SND_JACK_BTN_0, KEY_MEDIA);
-
-	/* multiple buttons supporting play/pause and volume up/down */
-	snd_jack_set_key(jack->jack, SND_JACK_BTN_1, KEY_MEDIA);
-	snd_jack_set_key(jack->jack, SND_JACK_BTN_2, KEY_VOLUMEUP);
-	snd_jack_set_key(jack->jack, SND_JACK_BTN_3, KEY_VOLUMEDOWN);
-
-	snd_soc_dapm_sync(&card->dapm);
-
-	return 0;
-}
-
-static int codec_init(struct tegra_machine *machine)
-{
-	struct snd_soc_dai_link *dai_links = machine->asoc->dai_links;
-	unsigned int num_links = machine->asoc->num_links, i;
-
-	if (!dai_links || !num_links)
-		return -EINVAL;
-
-	for (i = 0; i < num_links; i++) {
-		if (!dai_links[i].name)
-			continue;
-
-		if (strstr(dai_links[i].name, "rt565x-playback") ||
-		    strstr(dai_links[i].name, "rt565x-codec-sysclk-bclk1"))
-			dai_links[i].init = tegra_machine_rt565x_init;
-		else if (strstr(dai_links[i].name, "cs47l35-codec"))
-			dai_links[i].init = tegra_machine_cs47l35_init;
-	}
-
-	return 0;
-}
-
-static struct snd_soc_ops tegra_machine_pcm_ops = {
-	.hw_params	= tegra_machine_pcm_hw_params,
-	.startup	= tegra_machine_pcm_startup,
-	.shutdown	= tegra_machine_pcm_shutdown,
-};
-
-#if IS_ENABLED(CONFIG_SND_SOC_TEGRA210_ADSP_ALT)
-static struct snd_soc_compr_ops tegra_machine_compr_ops = {
-	.set_params	= tegra_machine_compr_set_params,
-	.startup	= tegra_machine_compr_startup,
-	.shutdown	= tegra_machine_compr_shutdown,
-};
-#endif
-
-static void set_dai_ops(struct tegra_machine *machine)
-{
-	int i;
-
-	/* set ADMAIF dai_ops */
-	for (i = machine->soc_data->admaif_dai_link_start;
-	     i <= machine->soc_data->admaif_dai_link_end; i++)
-		machine->asoc->dai_links[i].ops = &tegra_machine_pcm_ops;
-#if IS_ENABLED(CONFIG_SND_SOC_TEGRA210_ADSP_ALT)
-	/* set ADSP PCM/COMPR */
-	for (i = machine->soc_data->adsp_pcm_dai_link_start;
-	     i <= machine->soc_data->adsp_pcm_dai_link_end; i++)
-		machine->asoc->dai_links[i].ops = &tegra_machine_pcm_ops;
-	/* set ADSP COMPR */
-	for (i = machine->soc_data->adsp_compr_dai_link_start;
-	     i <= machine->soc_data->adsp_compr_dai_link_end; i++)
-		machine->asoc->dai_links[i].compr_ops =
-			&tegra_machine_compr_ops;
-#endif
-#if IS_ENABLED(CONFIG_SND_SOC_TEGRA186_ASRC_ALT)
-	if (!(of_machine_is_compatible("nvidia,tegra210")  ||
-		of_machine_is_compatible("nvidia,tegra210b01"))) {
-		/* set ASRC params. The default is 2 channels */
-		for (i = 0; i < 6; i++) {
-			int tx = TEGRA186_DAI_LINK_ASRC1_TX1 + i;
-			int rx = TEGRA186_DAI_LINK_ASRC1_RX1 + i;
-
-			machine->asoc->dai_links[tx].params =
-				&tegra_machine_asrc_link_params[i];
-			machine->asoc->dai_links[rx].params =
-				&tegra_machine_asrc_link_params[i];
-		}
-	}
-#endif
-}
-
-static int add_dai_links(struct platform_device *pdev)
-{
-	struct snd_soc_card *card = platform_get_drvdata(pdev);
-	struct tegra_machine *machine = snd_soc_card_get_drvdata(card);
 	int ret;
 
-	machine->asoc = devm_kzalloc(&pdev->dev, sizeof(*machine->asoc),
-				     GFP_KERNEL);
-	if (!machine->asoc)
-		return -ENOMEM;
-
-	ret = tegra_asoc_populate_dai_links(pdev);
-	if (ret < 0)
+	ret = snd_soc_codec_set_pll(cs47l35_codec,
+		MADERA_FLL1_REFCLK, MADERA_FLL_SRC_NONE, 0, 0);
+		
+	if (ret) {
+		dev_warn(card->dev,
+			"setting FLL1_REFCLK to zero failed: %d\n", ret);
 		return ret;
-
-	ret = tegra_asoc_populate_codec_confs(pdev);
-	if (ret < 0)
-		return ret;
-
-	ret = codec_init(machine);
-	if (ret < 0)
-		return ret;
-
-	set_dai_ops(machine);
-
+	}
 	return 0;
 }
 
-static const struct snd_kcontrol_new tegra_machine_controls[] = {
-	SOC_ENUM_EXT("codec-x rate", tegra_machine_codec_rate,
-		tegra_machine_codec_get_rate, tegra_machine_codec_put_rate),
-	SOC_ENUM_EXT("codec-x format", tegra_machine_codec_format,
-		tegra_machine_codec_get_format, tegra_machine_codec_put_format),
-};
-
-static struct snd_soc_card snd_soc_tegra_card = {
-	.owner = THIS_MODULE,
-	.controls = tegra_machine_controls,
-	.num_controls = ARRAY_SIZE(tegra_machine_controls),
-	.dapm_widgets = tegra_machine_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(tegra_machine_dapm_widgets),
-	.suspend_pre = tegra_machine_suspend_pre,
-	.fully_routed = true,
-};
-
-/* structure to match device tree node */
-static const struct of_device_id tegra_machine_of_match[] = {
-	{ .compatible = "nvidia,tegra-audio-t186ref-mobile-rt565x",
-		.data = &soc_data_tegra186 },
-	{ .compatible = "nvidia,tegra-audio-t210ref-mobile-rt565x",
-		.data = &soc_data_tegra210 },
-	{ .compatible = "nvidia,tegra-audio-mystique",
-		.data = &soc_data_tegra186 },
-	{},
-};
-
-static int tegra_machine_driver_probe(struct platform_device *pdev)
+static int tegra_cirrus_set_fll(struct snd_soc_card *card,
+	struct snd_soc_codec *cs47l35_codec, unsigned int clk_freq)
 {
-	struct device_node *np = pdev->dev.of_node;
-	struct snd_soc_card *card = &snd_soc_tegra_card;
-	struct tegra_machine *machine;
-	int ret = 0;
-	const struct of_device_id *match;
-
-	card->dev = &pdev->dev;
-	/* parse card name first to log errors with proper device name */
-	ret = snd_soc_of_parse_card_name(card, "nvidia,model");
+	int ret = snd_soc_codec_set_pll(cs47l35_codec,
+		MADERA_FLL1_REFCLK, MADERA_CLK_SRC_MCLK1,
+		AUD_MCLK, clk_freq);
+	
 	if (ret)
-		return ret;
+		dev_err(card->dev, "Failed to set FLL1 to %d: %d\n",
+			clk_freq, ret);
 
-	match = of_match_device(tegra_machine_of_match, &pdev->dev);
-	if (!match) {
-		dev_err(&pdev->dev, "Error: No device match found\n");
-		return -ENODEV;
-	}
-
-	if (!np) {
-		dev_err(&pdev->dev, "No DT node for tegra machine driver");
-		return -ENODEV;
-	}
-
-	machine = devm_kzalloc(&pdev->dev, sizeof(*machine), GFP_KERNEL);
-	if (!machine)
-		return -ENOMEM;
-
-	machine->soc_data = (struct tegra_machine_soc_data *)match->data;
-	if (!machine->soc_data)
-		return -EINVAL;
-
-	platform_set_drvdata(pdev, card);
-	snd_soc_card_set_drvdata(card, machine);
-
-	if (machine->soc_data->write_cdev1_state)
-		machine->audio_clock.clk_cdev1_state = 0;
-
-	if (machine->soc_data->write_idle_bias_off_state)
-		card->dapm.idle_bias_off = true;
-
-	ret = snd_soc_of_parse_audio_routing(card,
-				"nvidia,audio-routing");
-	if (ret)
-		return ret;
-
-	memset(&machine->audio_clock, 0, sizeof(machine->audio_clock));
-	if (of_property_read_u32(np, "mclk-fs",
-				 &machine->audio_clock.mclk_scale) < 0)
-		dev_dbg(&pdev->dev, "Missing property mclk-fs\n");
-
-	tegra_machine_dma_set_mask(pdev);
-
-	ret = add_dai_links(pdev);
-	if (ret < 0)
-		goto cleanup_asoc;
-
-	ret = tegra_alt_asoc_utils_init(&machine->audio_clock,
-					&pdev->dev,
-					card);
-	if (ret < 0)
-		goto cleanup_asoc;
-
-	ret = snd_soc_register_card(card);
-	if (ret) {
-		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n",
-			ret);
-		goto cleanup_asoc;
-	}
-
-	tegra_machine_add_i2s_codec_controls(card,
-					machine->soc_data->num_ahub_links +
-					machine->num_codec_links);
-
-	return 0;
-cleanup_asoc:
-	release_asoc_phandles(machine);
+	usleep_range(1000, 2000);
 	return ret;
 }
 
-static int tegra_machine_driver_remove(struct platform_device *pdev)
+static int tegra_cirrus_set_bias_level(struct snd_soc_card *card,
+	struct snd_soc_dapm_context *dapm,
+	enum snd_soc_bias_level level)
 {
-	struct snd_soc_card *card = platform_get_drvdata(pdev);
+	struct tegra_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
+	struct snd_soc_pcm_runtime *cs47l35_runtime = get_cs47l35_runtime(card);
+	struct snd_soc_codec *cs47l35_codec = cs47l35_runtime->codec;
 
-	snd_soc_unregister_card(card);
+	int ret = 0;
+	unsigned int clk_freq;
+
+	if (dapm->dev != cs47l35_runtime->codec_dai->dev)
+		return 0;
+
+	switch (level) {
+	case SND_SOC_BIAS_PREPARE:
+		if (dapm->bias_level == SND_SOC_BIAS_ON)
+			break;
+
+		mutex_lock(&priv->lock);
+
+		clk_freq = CS47L35_MAX_SYSCLK_1;
+		ret = tegra_cirrus_set_fll(card, cs47l35_codec, clk_freq);
+		
+		if (ret)
+			dev_err(card->dev,
+				"set_bias: Failed to set FLL1\n");
+			
+		mutex_unlock(&priv->lock);
+		break;
+	
+	default:
+		break;
+	}
+
+	return ret;
+}
+
+static int tegra_cirrus_set_bias_level_post(struct snd_soc_card *card,
+	struct snd_soc_dapm_context *dapm,
+	enum snd_soc_bias_level level)
+{
+	struct tegra_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
+	struct snd_soc_pcm_runtime *cs47l35_runtime = get_cs47l35_runtime(card);
+	struct snd_soc_codec *cs47l35_codec = cs47l35_runtime->codec;
+
+	if (dapm->dev != cs47l35_runtime->codec_dai->dev)
+		return 0;
+
+	switch (level) {
+	case SND_SOC_BIAS_STANDBY:
+		mutex_lock(&priv->lock);
+
+		if (tegra_cirrus_clear_flls(card, cs47l35_codec))
+			dev_err(card->dev,
+				"set_bias_post: failed to clear FLLs\n");
+
+		mutex_unlock(&priv->lock);
+
+		break;
+	
+	default:
+		break;
+	}
 
 	return 0;
 }
 
-#if CONFIG_PM
-static void tegra_asoc_machine_resume(struct device *dev)
-{
-	WARN_ON(snd_soc_resume(dev));
-}
-#else
-#define tegra_asoc_machine_resume NULL
-#endif
-
-static const struct dev_pm_ops tegra_asoc_machine_pm_ops = {
-	.prepare = snd_soc_suspend,
-	.complete = tegra_asoc_machine_resume,
-	.poweroff = snd_soc_poweroff,
-};
-
-static struct platform_driver tegra_asoc_machine_driver = {
-	.driver = {
-		.name = DRV_NAME,
-		.owner = THIS_MODULE,
-		.pm = &tegra_asoc_machine_pm_ops,
-		.of_match_table = tegra_machine_of_match,
+static struct snd_soc_dai_link tegra_cirrus_dai[] = {
+	[DAI_CS47L35] = {
+		.name		= "CS47L35",
+		.stream_name	= "CS47L35 AiFi",
+		.codec_dai_name	= "cs47l35-aif1",
+		.codec_name	= "cs47l35-codec",
+		.dai_fmt	=   SND_SOC_DAIFMT_I2S
+				  | SND_SOC_DAIFMT_NB_NF
+				  | SND_SOC_DAIFMT_CBM_CFM,
 	},
-	.probe = tegra_machine_driver_probe,
-	.remove = tegra_machine_driver_remove,
 };
-module_platform_driver(tegra_asoc_machine_driver);
 
-MODULE_AUTHOR("Mohan Kumar <mkumard@nvidia.com>, Sameer Pujar <spujar@nvidia.com>");
-MODULE_DESCRIPTION("Tegra ASoC machine driver");
+
+static int tegra_cirrus_late_probe(struct snd_soc_card *card)
+{
+	struct tegra_cirrus_priv *priv = snd_soc_card_get_drvdata(card);
+	struct snd_soc_pcm_runtime *cs47l35_runtime = get_cs47l35_runtime(card);
+	struct snd_soc_codec *cs47l35_codec = cs47l35_runtime->codec;
+
+	int ret, ret1;
+	unsigned int clk_freq = CS47L35_MAX_SYSCLK_1;
+
+	//snd_soc_dai_set_sysclk - configure DAI system or master clock.
+	ret = snd_soc_dai_set_sysclk(
+		cs47l35_runtime->codec_dai, MADERA_CLK_SYSCLK_1, 0, 0);
+	if (ret) {
+		dev_err(card->dev,
+			"Failed to set CS47L35 codec dai clk domain: %d\n", ret);
+		return ret;
+	}
+
+	return ret;
+
+	//snd_soc_codec_set_sysclk - configure CODEC system or master clock.
+	ret1 = snd_soc_codec_set_sysclk(cs47l35_codec,
+		MADERA_CLK_SYSCLK_1,
+		MADERA_CLK_SRC_FLL1,
+		clk_freq,
+		SND_SOC_CLOCK_IN);
+	if (ret1) {
+		dev_err(card->dev, "Failed to set SYSCLK: %d\n", ret);
+		goto out;
+	}
+
+	out:
+		mutex_unlock(&priv->lock);
+
+		return ret1;
+}
+
+
+/* audio machine driver */
+static struct snd_soc_card tegra_cirrus_card = {
+	.name			= "tegra-Cirrus",
+	.driver_name		= "tegraCirrus",
+	.owner			= THIS_MODULE,
+	.dai_link		= tegra_cirrus_dai,
+	.num_links		= ARRAY_SIZE(tegra_cirrus_dai),
+	.late_probe		= tegra_cirrus_late_probe,
+	.dapm_widgets		= tegra_cirrus_dapm_widgets,
+	.num_dapm_widgets	= ARRAY_SIZE(tegra_cirrus_dapm_widgets),
+	.dapm_routes		= tegra_cirrus_dapm_routes,
+	.num_dapm_routes	= ARRAY_SIZE(tegra_cirrus_dapm_routes),
+	.set_bias_level		= tegra_cirrus_set_bias_level,
+	.set_bias_level_post	= tegra_cirrus_set_bias_level_post,
+};
+
+static int tegra_cirrus_probe(struct platform_device *pdev)
+{
+	int ret = 0;
+	struct tegra_cirrus_priv *priv;
+	struct device_node *i2s_node;
+
+	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	mutex_init(&priv->lock);
+
+	snd_soc_card_set_drvdata(&tegra_cirrus_card, priv);
+
+	if (!pdev->dev.of_node)
+		return -ENODEV;
+
+	i2s_node = of_parse_phandle(
+			pdev->dev.of_node, "i2s-controller", 0);
+	if (!i2s_node) {
+		dev_err(&pdev->dev, "i2s-controller missing in DT\n");
+		return -ENODEV;
+	}
+
+	tegra_cirrus_dai[DAI_CS47L35].cpu_of_node = i2s_node;
+	tegra_cirrus_dai[DAI_CS47L35].platform_of_node = i2s_node;
+
+	tegra_cirrus_card.dev = &pdev->dev;
+
+	ret = devm_snd_soc_register_card(&pdev->dev, &tegra_cirrus_card);
+	if (ret) {
+		if (ret == -EPROBE_DEFER)
+			dev_dbg(&pdev->dev,
+				"register card requested probe deferral\n");
+		else
+			dev_err(&pdev->dev,
+				"Failed to register card: %d\n", ret);
+	}
+
+	return ret;
+}
+
+static const struct of_device_id tegra_cirrus_of_match[] = {
+	{ .compatible = "nvidia,tegra-audio-t186ref-mobile-rt565x", },
+	{},
+};
+MODULE_DEVICE_TABLE(of, tegra_cirrus_of_match);
+
+static struct platform_driver tegra_cirrus_driver = {
+	.driver	= {
+		.name   = "snd-tegra-cirrus",
+		.of_match_table = of_match_ptr(tegra_cirrus_of_match),
+	},
+	.probe	= tegra_cirrus_probe,
+};
+
+module_platform_driver(tegra_cirrus_driver);
+
+MODULE_AUTHOR("Matthias Reichl <hias@horus.com>");
+MODULE_DESCRIPTION("ASoC driver for Cirrus Logic Audio Card");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:" DRV_NAME);
-MODULE_DEVICE_TABLE(of, tegra_machine_of_match);

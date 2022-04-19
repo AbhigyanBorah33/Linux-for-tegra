@@ -1558,7 +1558,7 @@ static int cs47l35_codec_probe(struct snd_soc_codec *codec)
 	struct madera *madera = cs47l35->core.madera;
 	int i, ret;
 
-	printk(KERN_ALERT "cs47l35_codec_probe\n");
+	printk(KERN_DEBUG "cs47l35_codec_probe\n");
 
 	madera->dapm = snd_soc_codec_get_dapm(codec);
 
@@ -1657,7 +1657,7 @@ static int cs47l35_probe(struct platform_device *pdev)
 	struct cs47l35 *cs47l35;
 	int i, ret;
 	
-	printk(KERN_ALERT "cs47l35_probe\n");
+	printk(KERN_DEBUG "cs47l35_probe\n");
 
 	BUILD_BUG_ON(ARRAY_SIZE(cs47l35_dai) > MADERA_MAX_DAI);
 

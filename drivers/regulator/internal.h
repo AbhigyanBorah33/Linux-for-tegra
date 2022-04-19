@@ -33,7 +33,6 @@ struct regulator {
 	struct device_attribute dev_attr;
 	struct regulator_dev *rdev;
 	struct dentry *debugfs;
-	int use_count;
 };
 
 #ifdef CONFIG_OF

@@ -235,7 +235,7 @@ static int madera_irq_probe(struct platform_device *pdev)
 	unsigned int irq_flags = madera->pdata.irqchip.irq_flags;
 	int ret;
 
-	printk(KERN_ALERT "madera_irq_probe\n");
+//	printk(KERN_ALERT "madera_irq_probe\n");
 	dev_dbg(&pdev->dev, "probe\n");
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
